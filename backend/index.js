@@ -306,73 +306,233 @@ app.put('/api/productos/:id', async (req, res) => {
   app.post('/api/ofertas', async (req, res) => {
     const client = await pool.connect();
     try {
+      await client.query('BEGIN');
+
       const {
-        title,
-        description,
-        type,
-        discount,
-        discountType,
-        targetAudience,
-        conditions,
-        maxRedemptions,
-        productIds,
-        startDate,
-        endDate,
-        isActive,
-        terms
+        // Campos de oferta (tabla principal)
+        id_tipo_oferta,
+        id_temporada = null,
+        id_empleado_creador = 1, // fallback por ahora
+        nombre,
+        descripcion = null,
+        fecha_inicio,
+        fecha_fin,
+        cantidad_minima = 1,
+        valor_compra_minima = 0,
+        limite_usos_por_cliente = null,
+        limite_usos_total = null,
+        requiere_codigo = false,
+        codigo_promocional = null,
+        descuento_porcentaje = null,
+        descuento_valor_fijo = null,
+        productos_gratis = 0,
+        se_combina_con_otras = false,
+        prioridad = 1,
+        estado = 'activa',
+
+        // Tablas hijas
+        aplicaciones = [],
+        criterios = []
       } = req.body;
 
-      // Mapear type a id_tipo_oferta (ejemplo: puedes hacer una consulta para obtener el id)
-      const tipoResult = await pool.query('SELECT id_tipo_oferta FROM tipo_oferta WHERE nombre = $1 LIMIT 1', [type]);
-      const id_tipo_oferta = tipoResult.rows[0]?.id_tipo_oferta || null;
+      if (requiere_codigo && !codigo_promocional) {
+        return res.status(400).json({ error: 'El código promocional es requerido cuando requiere_codigo es true' });
+      }
 
-      // Estado
-      const estado = isActive ? 'activa' : 'inactiva';
-
-      // Insertar oferta principal
-      const ofertaResult = await client.query(
+      const ofertaInsert = await client.query(
         `INSERT INTO oferta (
-          id_tipo_oferta, nombre, descripcion, fecha_inicio, fecha_fin, limite_usos_por_cliente, estado, valor_compra_minima, prioridad
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id_oferta`,
+          id_tipo_oferta,
+          id_temporada,
+          id_empleado_creador,
+          nombre,
+          descripcion,
+          fecha_inicio,
+          fecha_fin,
+          cantidad_minima,
+          valor_compra_minima,
+          limite_usos_por_cliente,
+          limite_usos_total,
+          requiere_codigo,
+          codigo_promocional,
+          descuento_porcentaje,
+          descuento_valor_fijo,
+          productos_gratis,
+          se_combina_con_otras,
+          prioridad,
+          estado
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+        ) RETURNING id_oferta`,
         [
           id_tipo_oferta,
-          title,
-          description + (terms ? ('\nTérminos: ' + terms) : ''),
-          startDate,
-          endDate,
-          maxRedemptions || null,
-          estado,
-          discount,
-          1 // prioridad por defecto
+          id_temporada,
+          id_empleado_creador,
+          nombre,
+          descripcion,
+          fecha_inicio,
+          fecha_fin,
+          cantidad_minima,
+          valor_compra_minima,
+          limite_usos_por_cliente,
+          limite_usos_total,
+          requiere_codigo,
+          codigo_promocional,
+          descuento_porcentaje,
+          descuento_valor_fijo,
+          productos_gratis,
+          se_combina_con_otras,
+          prioridad,
+          estado
         ]
       );
-      const id_oferta = ofertaResult.rows[0].id_oferta;
 
-      // Insertar productos relacionados en oferta_productos
-      if (productIds && productIds.length > 0) {
-        for (const pid of productIds) {
+      const id_oferta = ofertaInsert.rows[0].id_oferta;
+
+      // Insertar aplicaciones
+      if (Array.isArray(aplicaciones)) {
+        for (const a of aplicaciones) {
+          const {
+            tipo_aplicacion,
+            id_producto = null,
+            id_categoria = null,
+            id_cliente = null,
+            marca = null,
+            cantidad_minima: app_cantidad_minima = 1,
+            cantidad_maxima = null,
+            descuento_adicional = 0,
+            unidades_gratis = 0,
+            es_exclusivo = false,
+            unidades_compradas = 0,
+            unidades_otorgadas = 0,
+            aplica_por_cada = false,
+            estado: app_estado = 'activo'
+          } = a;
+
           await client.query(
-            `INSERT INTO oferta_productos (id_oferta, id_producto, descuento_especifico, valor_descuento_especifico, cantidad_minima)
-             VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO oferta_aplicacion (
+              id_oferta,
+              tipo_aplicacion,
+              id_producto,
+              id_categoria,
+              id_cliente,
+              marca,
+              cantidad_minima,
+              cantidad_maxima,
+              descuento_adicional,
+              unidades_gratis,
+              es_exclusivo,
+              unidades_compradas,
+              unidades_otorgadas,
+              aplica_por_cada,
+              estado
+            ) VALUES (
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+            )`,
             [
               id_oferta,
-              pid,
-              discountType === 'percentage' ? discount : null,
-              discountType === 'fixed' ? discount : null,
-              1 // cantidad mínima por defecto
+              tipo_aplicacion,
+              id_producto,
+              id_categoria,
+              id_cliente,
+              marca,
+              app_cantidad_minima,
+              cantidad_maxima,
+              descuento_adicional,
+              unidades_gratis,
+              es_exclusivo,
+              unidades_compradas,
+              unidades_otorgadas,
+              aplica_por_cada,
+              app_estado
             ]
           );
         }
       }
 
-      res.status(201).json({ id_oferta });
+      // Insertar criterios
+      if (Array.isArray(criterios)) {
+        for (const c of criterios) {
+          const {
+            tipo_criterio,
+            operador,
+            valor,
+            es_obligatorio = true,
+            estado: crit_estado = 'activo'
+          } = c;
+
+          await client.query(
+            `INSERT INTO oferta_criterio (
+              id_oferta,
+              tipo_criterio,
+              operador,
+              valor,
+              es_obligatorio,
+              estado
+            ) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [id_oferta, tipo_criterio, operador, valor, es_obligatorio, crit_estado]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      return res.status(201).json({ id_oferta });
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error(err);
-      res.status(500).json({ error: 'Error al crear la oferta' });
+      return res.status(500).json({ error: 'Error al crear la oferta' });
     } finally {
       client.release();
     }
   });
+
+// Tipos de oferta activos
+app.get('/api/tipos-oferta', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id_tipo_oferta, nombre, descripcion, permite_porcentaje, permite_valor_fijo, permite_productos_gratis, permite_combinacion, estado
+       FROM tipo_oferta
+       WHERE estado = 'activo'
+       ORDER BY nombre`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener tipos de oferta' });
+  }
+});
+
+// Temporadas activas
+app.get('/api/temporadas', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id_temporada, nombre, descripcion, fecha_inicio, fecha_fin, es_recurrente, color_tema, icono, prioridad, estado
+       FROM temporada
+       WHERE estado = 'activa'
+       ORDER BY prioridad DESC, fecha_inicio DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener temporadas' });
+  }
+});
+
+// Clientes activos (para aplicar ofertas por cliente)
+app.get('/api/clientes', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.id_cliente AS id, p.nombre, p.apellido, p.cedula
+       FROM cliente c
+       JOIN persona p ON p.id_persona = c.id_persona
+       WHERE c.estado = 'activo'
+       ORDER BY p.nombre, p.apellido`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener clientes' });
+  }
+});
 
 app.listen(3001, () => {
   console.log('Servidor backend corriendo en http://localhost:3001');

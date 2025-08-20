@@ -560,10 +560,10 @@ const OfferForm: React.FC = () => {
                         <input className="form-input" placeholder="Tipo (edad, ubicacion, historial_compras)" value={cr.tipo_criterio} onChange={(e) => setFormData(prev => ({ ...prev, criterios: prev.criterios.map((x, i) => i === idx ? { ...x, tipo_criterio: e.target.value } : x) }))} />
                         <select className="form-select" value={cr.operador} onChange={(e) => setFormData(prev => ({ ...prev, criterios: prev.criterios.map((x, i) => i === idx ? { ...x, operador: e.target.value } : x) }))}>
                           <option value="=">=</option>
-                          <option value=">">></option>
-                          <option value="<"><</option>
-                          <option value=">=">>=</option>
-                          <option value="<="><=</option>
+                          <option value=">">&gt;</option>
+                          <option value="<">&lt;</option>
+                          <option value=">=">=</option>
+                          <option value="<=">=</option>
                           <option value="IN">IN</option>
                           <option value="LIKE">LIKE</option>
                         </select>

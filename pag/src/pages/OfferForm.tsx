@@ -476,12 +476,27 @@ const OfferForm: React.FC = () => {
 
                       {/* Selector por tipo */}
                       {ap.tipo_aplicacion === 'producto' && (
-                        <select className="form-select" value={ap.id_producto || ''} onChange={(e) => setFormData(prev => ({ ...prev, aplicaciones: prev.aplicaciones.map((x, i) => i === idx ? { ...x, id_producto: e.target.value ? Number(e.target.value) : undefined } : x) }))}>
-                          <option value="">Seleccione producto…</option>
-                          {catalogoProductos.map((p: any) => (
-                            <option key={p.id} value={p.id}>{p.producto} - ${p.precio}</option>
-                          ))}
-                        </select>
+                        <>
+                          <select className="form-select" value={ap.id_producto || ''} onChange={(e) => setFormData(prev => ({ ...prev, aplicaciones: prev.aplicaciones.map((x, i) => i === idx ? { ...x, id_producto: e.target.value ? Number(e.target.value) : undefined } : x) }))}>
+                            <option value="">Seleccione producto…</option>
+                            {catalogoProductos.map((p: any) => (
+                              <option key={p.id} value={p.id}>{p.producto} - ${p.precio}</option>
+                            ))}
+                          </select>
+                          {/* Nuevo campo para producto gratis */}
+                          <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                            <label className="form-label">Producto gratis (opcional)</label>
+                            <select className="form-select" value={ap.id_producto_gratis || ''} onChange={(e) => setFormData(prev => ({
+                              ...prev,
+                              aplicaciones: prev.aplicaciones.map((x, i) => i === idx ? { ...x, id_producto_gratis: e.target.value ? Number(e.target.value) : undefined } : x)
+                            }))}>
+                              <option value="">Sin producto gratis</option>
+                              {catalogoProductos.map((p: any) => (
+                                <option key={p.id} value={p.id}>{p.producto} - ${p.precio}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </>
                       )}
                       {ap.tipo_aplicacion === 'categoria' && (
                         <select className="form-select" value={ap.id_categoria || ''} onChange={(e) => setFormData(prev => ({ ...prev, aplicaciones: prev.aplicaciones.map((x, i) => i === idx ? { ...x, id_categoria: e.target.value ? Number(e.target.value) : undefined } : x) }))}>

@@ -8,58 +8,82 @@ const OffersManagement: React.FC = () => {
   const [offers, setOffers] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    const stored = localStorage.getItem('offers');
-    const storedProducts = localStorage.getItem('products');
-    let parsedOffers: any[] = [];
-    if (stored) {
-      parsedOffers = JSON.parse(stored).map((o: any) => ({
-        ...o,
-        startDate: o.startDate ? new Date(o.startDate) : undefined,
-        endDate: o.endDate ? new Date(o.endDate) : undefined
-      }));
-    }
-    // Generar ofertas automáticas
-    let autoOffers: any[] = [];
-    if (storedProducts) {
-      const products = JSON.parse(storedProducts);
-      const today = new Date();
-      products.forEach((product: any) => {
-        if (product.expirationDate) {
-          const expDate = new Date(product.expirationDate);
-          const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          if (diffDays > 0 && diffDays <= 20) {
-            let discount = 10 + ((20 - diffDays) * 2);
-            let priceWithDiscount = product.price * (1 - discount / 100);
-            if (priceWithDiscount < product.cost) {
-              discount = Math.round((1 - (product.cost / product.price)) * 100);
-            }
-            if (discount > 0 && product.isActive) {
-              autoOffers.push({
-                id: `auto-${product.id}`,
-                title: `¡Oferta por vencimiento! ${product.name}`,
-                description: `Descuento especial porque este producto vence en ${diffDays} días.`,
-                type: 'automatico',
-                discount,
-                discountType: 'percentage',
-                discountValue: discount,
-                productIds: [product.id],
-                startDate: today,
-                endDate: expDate,
-                isActive: true,
-                image: product.image || '',
-                terms: 'Oferta automática por vencimiento',
-                conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
-                targetAudience: 'general',
-                currentRedemptions: 0,
-                createdAt: today
-              });
+    const fetchData = async () => {
+      try {
+        const [offersRes, productsRes] = await Promise.all([
+          fetch('http://localhost:3001/api/ofertas').then(r => r.json()).catch(() => []),
+          fetch('http://localhost:3001/api/productos').then(r => r.json()).catch(() => [])
+        ]);
+
+        const backendOffers = (offersRes || []).map((o: any) => ({
+          ...o,
+          startDate: o.startDate ? new Date(o.startDate) : undefined,
+          endDate: o.endDate ? new Date(o.endDate) : undefined
+        }));
+
+        // Compatibilidad: incluir ofertas guardadas en localStorage
+        let localOffers: any[] = [];
+        const stored = localStorage.getItem('offers');
+        if (stored) {
+          try {
+            localOffers = JSON.parse(stored).map((o: any) => ({
+              ...o,
+              startDate: o.startDate ? new Date(o.startDate) : undefined,
+              endDate: o.endDate ? new Date(o.endDate) : undefined
+            }));
+          } catch {}
+        }
+
+        const today = new Date();
+        const autoOffers: any[] = [];
+        (productsRes || []).forEach((p: any) => {
+          if (p && p.fecha_vencimiento) {
+            const expDate = new Date(p.fecha_vencimiento);
+            const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays > 0 && diffDays <= 30) {
+              const price = Number(p.precio);
+              const cost = p.precio_costo_unitario != null ? Number(p.precio_costo_unitario) : undefined;
+              const minDiscount = 5;
+              const maxDiscount = 60;
+              let discount = Math.round(minDiscount + ((30 - diffDays) * (maxDiscount - minDiscount) / 30));
+              if (price && cost != null) {
+                const priceWithDiscount = price * (1 - discount / 100);
+                if (priceWithDiscount < cost) {
+                  const maxAllowedDiscount = Math.floor((1 - (cost / price)) * 100);
+                  discount = Math.max(0, maxAllowedDiscount);
+                }
+              }
+              if (discount > 0 && p.estado === 'activo') {
+                autoOffers.push({
+                  id: `auto-${p.id}`,
+                  title: `¡Oferta por vencimiento! ${p.producto}`,
+                  description: `Descuento especial porque este producto vence en ${diffDays} días.`,
+                  type: 'automatico',
+                  discount,
+                  discountType: 'percentage',
+                  discountValue: discount,
+                  productIds: [String(p.id)],
+                  startDate: today,
+                  endDate: expDate,
+                  isActive: true,
+                  image: '',
+                  terms: 'Oferta automática por vencimiento',
+                  conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
+                  targetAudience: 'general',
+                  currentRedemptions: 0,
+                  createdAt: today
+                });
+              }
             }
           }
-        }
-      });
-    }
-    // Mezclar y mostrar en la interfaz
-    setOffers([...parsedOffers, ...autoOffers]);
+        });
+
+        setOffers([...localOffers, ...backendOffers, ...autoOffers]);
+      } catch (e) {
+        console.error('Error cargando ofertas', e);
+      }
+    };
+    fetchData();
   }, []);
 
   const handleDelete = (id: string) => {

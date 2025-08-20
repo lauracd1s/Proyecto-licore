@@ -164,13 +164,34 @@ app.get('/api/productos', async (req, res) => {
         p.nombre AS producto,
         c.nombre AS categoria,
         p.precio_venta AS precio,
-        COALESCE(li.stock_actual, 0) AS stock,
+        COALESCE(
+          (
+            SELECT li.stock_actual
+            FROM lote_inventario li
+            JOIN lote l2 ON li.id_lote = l2.id_lote
+            WHERE l2.id_producto = p.id_producto
+            ORDER BY l2.fecha_vencimiento ASC NULLS LAST
+            LIMIT 1
+          ), 0
+        ) AS stock,
         p.estado,
-        co.stock_minimo
+        co.stock_minimo,
+        (
+          SELECT l.fecha_vencimiento
+          FROM lote l
+          WHERE l.id_producto = p.id_producto
+          ORDER BY l.fecha_vencimiento ASC NULLS LAST
+          LIMIT 1
+        ) AS fecha_vencimiento,
+        (
+          SELECT l.precio_costo_unitario
+          FROM lote l
+          WHERE l.id_producto = p.id_producto
+          ORDER BY l.fecha_vencimiento ASC NULLS LAST
+          LIMIT 1
+        ) AS precio_costo_unitario
       FROM producto p
       LEFT JOIN categoria_producto c ON p.id_categoria = c.id_categoria
-      LEFT JOIN lote l ON l.id_producto = p.id_producto
-      LEFT JOIN lote_inventario li ON li.id_lote = l.id_lote
       LEFT JOIN configuracion_inventario co ON co.id_producto = p.id_producto
       ORDER BY p.id_producto DESC
     `);
@@ -484,6 +505,64 @@ app.put('/api/productos/:id', async (req, res) => {
       client.release();
     }
   });
+
+// Listar ofertas creadas (mapeadas al formato del frontend)
+app.get('/api/ofertas', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        o.id_oferta,
+        o.nombre,
+        o.descripcion,
+        o.fecha_inicio,
+        o.fecha_fin,
+        o.estado,
+        o.descuento_porcentaje,
+        o.descuento_valor_fijo,
+        o.productos_gratis,
+        COALESCE(ap.product_ids, ARRAY[]::bigint[]) AS product_ids
+      FROM oferta o
+      LEFT JOIN LATERAL (
+        SELECT array_agg(oa.id_producto) AS product_ids
+        FROM oferta_aplicacion oa
+        WHERE oa.id_oferta = o.id_oferta AND oa.tipo_aplicacion = 'producto'
+      ) ap ON TRUE
+      ORDER BY o.fecha_inicio DESC
+    `);
+
+    const mapped = result.rows.map((o) => {
+      const hasPercentage = o.descuento_porcentaje !== null && o.descuento_porcentaje !== undefined;
+      const discountNumeric = Number(hasPercentage ? o.descuento_porcentaje : (o.descuento_valor_fijo ?? 0));
+      const type = o.productos_gratis > 0
+        ? 'combo'
+        : (hasPercentage ? 'descuento' : 'precio_especial');
+      return {
+        id: String(o.id_oferta),
+        title: o.nombre,
+        description: o.descripcion,
+        type,
+        discount: discountNumeric,
+        discountType: hasPercentage ? 'percentage' : 'fixed',
+        discountValue: discountNumeric,
+        productIds: (o.product_ids || []).map((x) => String(x)),
+        startDate: o.fecha_inicio,
+        endDate: o.fecha_fin,
+        isActive: o.estado === 'activa',
+        image: '',
+        terms: '',
+        conditions: '',
+        targetAudience: 'general',
+        currentRedemptions: 0,
+        createdAt: o.fecha_inicio
+      };
+    });
+
+    res.json(mapped);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener ofertas' });
+  }
+});
 
 // Tipos de oferta activos
 app.get('/api/tipos-oferta', async (req, res) => {

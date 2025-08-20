@@ -8,58 +8,103 @@ const OffersManagement: React.FC = () => {
   const [offers, setOffers] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    const stored = localStorage.getItem('offers');
-    const storedProducts = localStorage.getItem('products');
-    let parsedOffers: any[] = [];
-    if (stored) {
-      parsedOffers = JSON.parse(stored).map((o: any) => ({
-        ...o,
-        startDate: o.startDate ? new Date(o.startDate) : undefined,
-        endDate: o.endDate ? new Date(o.endDate) : undefined
-      }));
-    }
-    // Generar ofertas automáticas
-    let autoOffers: any[] = [];
-    if (storedProducts) {
-      const products = JSON.parse(storedProducts);
-      const today = new Date();
-      products.forEach((product: any) => {
-        if (product.expirationDate) {
-          const expDate = new Date(product.expirationDate);
-          const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          if (diffDays > 0 && diffDays <= 20) {
-            let discount = 10 + ((20 - diffDays) * 2);
-            let priceWithDiscount = product.price * (1 - discount / 100);
-            if (priceWithDiscount < product.cost) {
-              discount = Math.round((1 - (product.cost / product.price)) * 100);
-            }
-            if (discount > 0 && product.isActive) {
-              autoOffers.push({
-                id: `auto-${product.id}`,
-                title: `¡Oferta por vencimiento! ${product.name}`,
-                description: `Descuento especial porque este producto vence en ${diffDays} días.`,
-                type: 'automatico',
-                discount,
-                discountType: 'percentage',
-                discountValue: discount,
-                productIds: [product.id],
-                startDate: today,
-                endDate: expDate,
-                isActive: true,
-                image: product.image || '',
-                terms: 'Oferta automática por vencimiento',
-                conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
-                targetAudience: 'general',
-                currentRedemptions: 0,
-                createdAt: today
-              });
+    const load = async () => {
+      try {
+        const [dbOffers, products] = await Promise.all([
+          fetch('http://localhost:3001/api/ofertas').then(r => r.json()),
+          fetch('http://localhost:3001/api/productos').then(r => r.json())
+        ]);
+
+        const typeFromNombre = (nombre?: string) => {
+          if (!nombre) return 'descuento';
+          const n = String(nombre).toLowerCase();
+          if (n.includes('2x1')) return '2x1';
+          if (n.includes('3x2')) return '3x2';
+          if (n.includes('combo')) return 'combo';
+          if (n.includes('precio')) return 'precio_especial';
+          if (n.includes('descu')) return 'descuento';
+          return 'descuento';
+        };
+
+        const mappedDbOffers = (dbOffers || []).map((o: any) => ({
+          id: String(o.id_oferta),
+          title: o.nombre,
+          description: o.descripcion || '',
+          type: typeFromNombre(o.tipo_oferta?.nombre),
+          discount: o.descuento_porcentaje || 0,
+          discountType: 'percentage',
+          discountValue: o.descuento_porcentaje || 0,
+          productIds: [],
+          startDate: o.fecha_inicio ? new Date(o.fecha_inicio) : new Date(),
+          endDate: o.fecha_fin ? new Date(o.fecha_fin) : new Date(),
+          isActive: o.estado === 'activa',
+          image: '',
+          terms: '',
+          conditions: '',
+          targetAudience: 'general',
+          currentRedemptions: o.usos_actuales || 0,
+          createdAt: o.fecha_creacion ? new Date(o.fecha_creacion) : new Date()
+        }));
+
+        // Ofertas automáticas por vencimiento (30 días)
+        const today = new Date();
+        const autoOffers: any[] = [];
+        (products || []).forEach((p: any) => {
+          if (p.fecha_vencimiento) {
+            const expDate = new Date(p.fecha_vencimiento);
+            const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays > 0 && diffDays <= 30 && p.estado === 'activo') {
+              // Descuento lineal creciente: ~5% a 30 días hasta ~60% a 1 día
+              let discount = Math.round(5 + ((30 - diffDays) * (55 / 29)));
+              // Asegurar que el precio con descuento no sea menor que el costo
+              const priceWithDiscount = Number(p.precio) * (1 - discount / 100);
+              const cost = Number(p.precio_costo_unitario || 0);
+              if (cost > 0 && priceWithDiscount < cost) {
+                const maxDiscount = Math.round((1 - (cost / Number(p.precio))) * 100);
+                discount = Math.max(0, maxDiscount);
+              }
+              if (discount > 0) {
+                autoOffers.push({
+                  id: `auto-${p.id}`,
+                  title: `¡Oferta por vencimiento! ${p.producto}`,
+                  description: `Descuento especial porque este producto vence en ${diffDays} días.`,
+                  type: 'automatico',
+                  discount,
+                  discountType: 'percentage',
+                  discountValue: discount,
+                  productIds: [String(p.id)],
+                  startDate: today,
+                  endDate: expDate,
+                  isActive: true,
+                  image: '',
+                  terms: 'Oferta automática por vencimiento',
+                  conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
+                  targetAudience: 'general',
+                  currentRedemptions: 0,
+                  createdAt: today
+                });
+              }
             }
           }
+        });
+
+        setOffers([...mappedDbOffers, ...autoOffers]);
+      } catch (e) {
+        console.error(e);
+        // fallback a localStorage previo
+        const stored = localStorage.getItem('offers');
+        let parsedOffers: any[] = [];
+        if (stored) {
+          parsedOffers = JSON.parse(stored).map((o: any) => ({
+            ...o,
+            startDate: o.startDate ? new Date(o.startDate) : undefined,
+            endDate: o.endDate ? new Date(o.endDate) : undefined
+          }));
         }
-      });
-    }
-    // Mezclar y mostrar en la interfaz
-    setOffers([...parsedOffers, ...autoOffers]);
+        setOffers(parsedOffers);
+      }
+    };
+    load();
   }, []);
 
   const handleDelete = (id: string) => {

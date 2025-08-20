@@ -166,7 +166,21 @@ app.get('/api/productos', async (req, res) => {
         p.precio_venta AS precio,
         COALESCE(li.stock_actual, 0) AS stock,
         p.estado,
-        co.stock_minimo
+        co.stock_minimo,
+        (
+          SELECT l.fecha_vencimiento
+          FROM lote l
+          WHERE l.id_producto = p.id_producto
+          ORDER BY l.fecha_vencimiento DESC NULLS LAST
+          LIMIT 1
+        ) AS fecha_vencimiento,
+        (
+          SELECT l.precio_costo_unitario
+          FROM lote l
+          WHERE l.id_producto = p.id_producto
+          ORDER BY l.fecha_vencimiento DESC NULLS LAST
+          LIMIT 1
+        ) AS precio_costo_unitario
       FROM producto p
       LEFT JOIN categoria_producto c ON p.id_categoria = c.id_categoria
       LEFT JOIN lote l ON l.id_producto = p.id_producto
@@ -484,6 +498,24 @@ app.put('/api/productos/:id', async (req, res) => {
       client.release();
     }
   });
+
+// Obtener ofertas simples desde tabla oferta
+app.get('/api/ofertas', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id_oferta, id_tipo_oferta, id_temporada, id_empleado_creador, nombre, descripcion,
+              fecha_inicio, fecha_fin, cantidad_minima, valor_compra_minima, limite_usos_por_cliente,
+              limite_usos_total, usos_actuales, requiere_codigo, codigo_promocional, descuento_porcentaje,
+              descuento_valor_fijo, productos_gratis, se_combina_con_otras, prioridad, estado, fecha_creacion
+       FROM oferta
+       ORDER BY fecha_creacion DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener ofertas' });
+  }
+});
 
 // Tipos de oferta activos
 app.get('/api/tipos-oferta', async (req, res) => {

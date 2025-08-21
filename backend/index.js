@@ -830,6 +830,39 @@ app.get('/api/ofertas/:id', async (req, res) => {
   }
 });
 
+// NUEVO: Eliminar una oferta por id (incluye tablas relacionadas)
+app.delete('/api/ofertas/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    await client.query('BEGIN');
+
+    // Verificar existencia
+    const existsRes = await client.query(`SELECT 1 FROM oferta WHERE id_oferta = $1`, [id]);
+    if (existsRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Oferta no encontrada' });
+    }
+
+    // Eliminar dependencias explícitas (por si no hay ON DELETE CASCADE)
+    await client.query(`DELETE FROM oferta_aplicada WHERE id_oferta = $1`, [id]);
+    await client.query(`DELETE FROM oferta_aplicacion WHERE id_oferta = $1`, [id]);
+    await client.query(`DELETE FROM oferta_criterio WHERE id_oferta = $1`, [id]);
+
+    // Eliminar oferta
+    const delRes = await client.query(`DELETE FROM oferta WHERE id_oferta = $1`, [id]);
+
+    await client.query('COMMIT');
+    return res.status(200).json({ success: true, deleted: delRes.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    return res.status(500).json({ error: 'Error al eliminar la oferta' });
+  } finally {
+    client.release();
+  }
+});
+
 // Endpoint para el POS: ofertas normalizadas con productos objetivos
 app.get('/api/ofertas-para-pos', async (req, res) => {
   try {

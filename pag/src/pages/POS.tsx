@@ -15,7 +15,7 @@ const POS: React.FC = () => {
       try {
         const [productsRes, offersRes, customersRes, caducidadRes] = await Promise.all([
           fetch('http://localhost:3001/api/productos'),
-          fetch('http://localhost:3001/api/ofertas'),
+          fetch('http://localhost:3001/api/ofertas-para-pos'),
           fetch('http://localhost:3001/api/clientes'),
           fetch('http://localhost:3001/api/ofertas-caducidad')
         ]);
@@ -48,24 +48,24 @@ const POS: React.FC = () => {
 
         // Normalizar ofertas
         const offersNorm: OfferDisplay[] = offersData.map((o: any) => ({
-          id: o.id_oferta?.toString() || o.id?.toString(),
-          title: o.nombre || o.title,
-          description: o.descripcion || '',
-          type: o.tipo_oferta || 'descuento',
-          discount: o.descuento_porcentaje || o.discount || 0,
-          discountType: o.descuento_porcentaje ? 'percentage' : 'fixed',
-          discountValue: o.descuento_porcentaje || o.descuento_valor_fijo || 0,
-          productIds: o.aplicaciones?.map((a: any) => a.id_producto?.toString()).filter(Boolean) || [],
-          startDate: o.fecha_inicio ? new Date(o.fecha_inicio) : new Date(),
-          endDate: o.fecha_fin ? new Date(o.fecha_fin) : new Date(),
-          isActive: o.estado === 'activa',
-          image: '',
-          terms: '',
-          conditions: '',
-          targetAudience: 'general',
-          maxRedemptions: undefined,
-          currentRedemptions: 0,
-          createdAt: new Date()
+          id: o.id?.toString() || o.id_oferta?.toString(),
+          title: o.title || o.nombre || '',
+          description: o.description || o.descripcion || '',
+          type: o.type || 'descuento',
+          discount: Number(o.discount ?? o.discountValue ?? o.descuento_porcentaje ?? o.descuento_valor_fijo ?? 0),
+          discountType: o.discountType || (o.descuento_porcentaje ? 'percentage' : 'fixed'),
+          discountValue: Number(o.discountValue ?? o.descuento_porcentaje ?? o.descuento_valor_fijo ?? 0),
+          productIds: Array.isArray(o.productIds) ? o.productIds.map((id: any) => id.toString()) : [],
+          startDate: new Date(o.startDate || o.fecha_inicio || new Date()),
+          endDate: new Date(o.endDate || o.fecha_fin || new Date()),
+          isActive: o.isActive !== undefined ? o.isActive : o.estado === 'activa',
+          image: o.image || '',
+          terms: o.terms || '',
+          conditions: o.conditions || '',
+          targetAudience: o.targetAudience || 'general',
+          maxRedemptions: o.maxRedemptions ?? undefined,
+          currentRedemptions: Number(o.currentRedemptions || 0),
+          createdAt: new Date(o.createdAt || o.startDate || new Date())
         }));
 
         // Ofertas automáticas por caducidad
@@ -251,6 +251,20 @@ const POS: React.FC = () => {
   const processSale = async () => {
     if (cartItems.length === 0) return;
 
+    // Construir resumen de ofertas aplicadas agrupadas por oferta
+    const offersMap: Record<string, { offerId: string; discountAmount: number; freeProducts?: number } > = {};
+    cartItems.forEach(item => {
+      const offer = getActiveOfferForProduct(item.productId);
+      if (offer) {
+        const key = offer.id;
+        if (!offersMap[key]) {
+          offersMap[key] = { offerId: key, discountAmount: 0, freeProducts: 0 };
+        }
+        offersMap[key].discountAmount += Number(item.discount || 0);
+      }
+    });
+    const appliedOffersPayload = Object.values(offersMap);
+
     // Construir datos para la API
     const venta = {
       customerId: selectedCustomer || null,
@@ -269,7 +283,8 @@ const POS: React.FC = () => {
       status: 'completada',
       completedAt: new Date(),
       cashierId: 'cashier1',
-      createdAt: new Date()
+      createdAt: new Date(),
+      appliedOffers: appliedOffersPayload
     };
 
     try {

@@ -45,9 +45,26 @@ const OffersManagement: React.FC = () => {
   }, []);
 
   // Eliminar solo del estado (no elimina en la base de datos)
-  const handleDelete = (id: string) => {
-    if (window.confirm('¿Estás seguro de que quieres eliminar esta oferta?')) {
-      setOffers(offers.filter(o => o.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar esta oferta?')) {
+      return;
+    }
+
+    const previous = offers;
+    // Optimista
+    setOffers(offers.filter(o => String(o.id) !== String(id)));
+
+    try {
+      const res = await fetch(`http://localhost:3001/api/ofertas/${id}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) {
+        throw new Error('Error al eliminar en el servidor');
+      }
+    } catch (err) {
+      // Revertir si falla
+      setOffers(previous);
+      alert('No se pudo eliminar la oferta. Inténtalo nuevamente.');
     }
   };
 

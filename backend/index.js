@@ -622,7 +622,8 @@ app.post('/api/ventas', async (req, res) => {
       status,
       completedAt,
       cashierId,
-      createdAt
+      createdAt,
+      appliedOffers
     } = req.body;
 
     // Crear factura
@@ -694,6 +695,32 @@ app.post('/api/ventas', async (req, res) => {
         await client.query(
           `UPDATE lote_inventario SET stock_actual = stock_actual - $1 WHERE id_lote = $2`,
           [item.quantity, id_lote]
+        );
+      }
+    }
+
+    // Registrar ofertas aplicadas si vienen en la solicitud
+    if (Array.isArray(appliedOffers) && appliedOffers.length > 0) {
+      for (const ao of appliedOffers) {
+        const offerId = ao.offerId ? Number(ao.offerId) : null;
+        if (!offerId) continue;
+        const valor_descuento_aplicado = Number(ao.discountAmount) || 0;
+        const productos_gratis_otorgados = Number(ao.freeProducts || 0);
+        await client.query(
+          `INSERT INTO oferta_aplicada (
+            id_oferta,
+            id_factura,
+            id_cliente,
+            valor_descuento_aplicado,
+            productos_gratis_otorgados
+          ) VALUES ($1,$2,$3,$4,$5)`,
+          [
+            offerId,
+            id_factura,
+            customerId ? Number(customerId) : null,
+            valor_descuento_aplicado,
+            productos_gratis_otorgados
+          ]
         );
       }
     }
@@ -800,6 +827,136 @@ app.get('/api/ofertas/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error al obtener oferta' });
+  }
+});
+
+// Endpoint para el POS: ofertas normalizadas con productos objetivos
+app.get('/api/ofertas-para-pos', async (req, res) => {
+  try {
+    // Traer ofertas activas dentro de rango de fechas
+    const ofertasRes = await pool.query(`
+      SELECT 
+        o.id_oferta,
+        o.nombre,
+        o.descripcion,
+        o.fecha_inicio,
+        o.fecha_fin,
+        o.estado,
+        o.descuento_porcentaje,
+        o.descuento_valor_fijo,
+        o.productos_gratis,
+        t.nombre AS tipo_oferta
+      FROM oferta o
+      JOIN tipo_oferta t ON t.id_tipo_oferta = o.id_tipo_oferta
+      WHERE o.estado = 'activa' AND o.fecha_inicio <= NOW() AND o.fecha_fin >= NOW()
+      ORDER BY o.prioridad DESC, o.fecha_inicio DESC
+    `);
+
+    const ofertas = ofertasRes.rows;
+    const ids = ofertas.map(o => o.id_oferta);
+    let aplicaciones = [];
+    if (ids.length > 0) {
+      const appsRes = await pool.query(
+        `SELECT id_oferta, tipo_aplicacion, id_producto, id_categoria, id_cliente, marca 
+         FROM oferta_aplicacion 
+         WHERE id_oferta = ANY($1::bigint[]) AND estado = 'activo'`,
+        [ids]
+      );
+      aplicaciones = appsRes.rows;
+    }
+
+    // Traer catálogo básico de productos activos para expandir por categoría/marca
+    const productosRes = await pool.query(
+      `SELECT id_producto, id_categoria, COALESCE(marca, '') AS marca 
+       FROM producto 
+       WHERE estado = 'activo'`
+    );
+    const productos = productosRes.rows;
+
+    // Normalizar a estructura esperada por el POS
+    const normalized = ofertas.map(o => {
+      const apps = aplicaciones.filter(a => a.id_oferta === o.id_oferta);
+      const productIdSet = new Set();
+
+      // Aplicación directa por producto
+      apps
+        .filter(a => a.tipo_aplicacion === 'producto' && a.id_producto)
+        .forEach(a => productIdSet.add(String(a.id_producto)));
+
+      // Aplicación por categoría
+      apps
+        .filter(a => a.tipo_aplicacion === 'categoria' && a.id_categoria)
+        .forEach(a => {
+          productos
+            .filter(p => Number(p.id_categoria) === Number(a.id_categoria))
+            .forEach(p => productIdSet.add(String(p.id_producto)));
+        });
+
+      // Aplicación por marca
+      apps
+        .filter(a => a.tipo_aplicacion === 'marca' && a.marca)
+        .forEach(a => {
+          const target = String(a.marca).trim().toLowerCase();
+          productos
+            .filter(p => String(p.marca).trim().toLowerCase() === target)
+            .forEach(p => productIdSet.add(String(p.id_producto)));
+        });
+
+      // Aplicación para todos
+      if (apps.some(a => a.tipo_aplicacion === 'todos')) {
+        productos.forEach(p => productIdSet.add(String(p.id_producto)));
+      }
+
+      const productIds = Array.from(productIdSet);
+
+      // Mapear tipo_oferta a tipos del POS
+      let type = 'descuento';
+      const tipoLower = (o.tipo_oferta || '').toLowerCase();
+      if (tipoLower.includes('2x1')) type = '2x1';
+      else if (tipoLower.includes('3x2')) type = '3x2';
+      else if (tipoLower.includes('combo')) type = 'combo';
+      else if (tipoLower.includes('precio')) type = 'precio_especial';
+
+      // Determinar discountType/discountValue
+      const hasPct = o.descuento_porcentaje !== null && o.descuento_porcentaje !== undefined;
+      const hasFixed = o.descuento_valor_fijo !== null && o.descuento_valor_fijo !== undefined;
+
+      let discountType = hasPct ? 'percentage' : 'fixed';
+      let discountValue = hasPct ? Number(o.descuento_porcentaje) : Number(o.descuento_valor_fijo || 0);
+
+      // Si el tipo dice precio especial pero viene porcentaje, tratar como descuento
+      if (type === 'precio_especial' && hasPct) {
+        type = 'descuento';
+        discountType = 'percentage';
+        discountValue = Number(o.descuento_porcentaje);
+      }
+
+      return {
+        id: String(o.id_oferta),
+        title: o.nombre,
+        description: o.descripcion || '',
+        type,
+        discount: discountValue,
+        discountType,
+        discountValue,
+        productIds,
+        startDate: o.fecha_inicio,
+        endDate: o.fecha_fin,
+        isActive: true,
+        image: '',
+        terms: '',
+        conditions: '',
+        targetAudience: 'general',
+        maxRedemptions: null,
+        currentRedemptions: 0,
+        createdAt: o.fecha_inicio
+      };
+    });
+
+    res.json(normalized);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener ofertas para POS' });
   }
 });
 // Endpoint para métricas del dashboard

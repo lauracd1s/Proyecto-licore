@@ -99,21 +99,27 @@ const Dashboard: React.FC = () => {
           <div className="card-header">
             <h3 className="card-title">Ingresos Mensuales</h3>
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={dashboardMetrics.monthlyRevenue}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip formatter={(value) => [`$${value}`, 'Ingresos']} />
-              <Line 
-                type="monotone" 
-                dataKey="revenue" 
-                stroke="#8B4513" 
-                strokeWidth={3}
-                dot={{ fill: '#DAA520', strokeWidth: 2, r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {Array.isArray(dashboardMetrics.monthlyRevenue) && dashboardMetrics.monthlyRevenue.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={dashboardMetrics.monthlyRevenue}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip formatter={(value) => [`$${value}`, 'Ingresos']} />
+                <Line 
+                  type="monotone" 
+                  dataKey="revenue" 
+                  stroke="#8B4513" 
+                  strokeWidth={3}
+                  dot={{ fill: '#DAA520', strokeWidth: 2, r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#999' }}>
+              No hay datos de ingresos mensuales disponibles.
+            </div>
+          )}
         </div>
 
         {/* Ventas por categoría */}

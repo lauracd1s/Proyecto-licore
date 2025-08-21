@@ -388,19 +388,23 @@ const POS: React.FC = () => {
                     ? (offerInfo?.isCaducidad ? '#ff6b35' : '#28a745') 
                     : '#E0E0E0')}
                 >
-                  {/* Badge visual de oferta */}
+                  {/* Nombre del producto */}
+                  <h4 style={{ fontSize: '1rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    {product.name}
+                  </h4>
+                  {/* Badge visual de oferta debajo del nombre */}
                   {hasOffer && offerInfo && (
                     <div style={{
-                      position: 'absolute',
-                      top: '8px',
-                      left: '8px',
-                      backgroundColor: offerInfo.isCaducidad ? '#ff6b35' : '#28a745',
-                      color: 'white',
+                      marginBottom: '0.5rem',
+                      backgroundColor: offerInfo.isCaducidad ? '#fff0eb' : '#d4edda',
+                      color: offerInfo.isCaducidad ? '#ff6b35' : '#28a745',
                       borderRadius: '12px',
                       padding: '2px 10px',
                       fontWeight: 'bold',
                       fontSize: '0.8rem',
-                      zIndex: 2,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
                     }}>
                       {offerInfo.isCaducidad ? (
@@ -421,43 +425,10 @@ const POS: React.FC = () => {
                     </div>
                   )}
                   
-                  <h4 style={{ fontSize: '1rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                    {product.name}
-                  </h4>
+                  {/* Marca */}
                   <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}>
                     {product.brand}
                   </p>
-                  
-                  {hasOffer && offerInfo && (
-                    <div style={{
-                      fontSize: '0.75rem',
-                      color: offerInfo.isCaducidad ? '#ff6b35' : '#28a745',
-                      fontWeight: 'bold',
-                      marginBottom: '0.5rem',
-                      padding: '2px 6px',
-                      backgroundColor: offerInfo.isCaducidad ? '#fff0eb' : '#d4edda',
-                      borderRadius: '4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '2px'
-                    }}>
-                      {offerInfo.isCaducidad ? (
-                        <>
-                          <AlertTriangle size={10} />
-                          {`${offerInfo.discount}% OFF por vencimiento`}
-                        </>
-                      ) : (
-                        <>
-                          <Tag size={10} />
-                          {offerInfo.type === 'descuento'
-                            ? `${offerInfo.discount}${offerInfo.discountType === 'percentage' ? '%' : '$'} OFF`
-                            : offerInfo.type === 'precio_especial'
-                            ? `Precio especial $${offerInfo.discount}`
-                            : offerInfo.type.replace('_', ' ').toUpperCase()}
-                        </>
-                      )}
-                    </div>
-                  )}
                   
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontWeight: '700', color: '#8B4513', fontSize: '1.1rem' }}>

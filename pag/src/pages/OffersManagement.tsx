@@ -3,70 +3,51 @@ import { Link } from 'react-router-dom';
 import { Plus, Edit, Trash2, Tag, Clock, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
 
+
 const OffersManagement: React.FC = () => {
-  // Leer ofertas y productos, mezclar ofertas automáticas
+  // Leer ofertas desde el backend
   const [offers, setOffers] = React.useState<any[]>([]);
+  // Ofertas por caducidad
+  const [expiryOffers, setExpiryOffers] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    const stored = localStorage.getItem('offers');
-    const storedProducts = localStorage.getItem('products');
-    let parsedOffers: any[] = [];
-    if (stored) {
-      parsedOffers = JSON.parse(stored).map((o: any) => ({
-        ...o,
-        startDate: o.startDate ? new Date(o.startDate) : undefined,
-        endDate: o.endDate ? new Date(o.endDate) : undefined
-      }));
-    }
-    // Generar ofertas automáticas
-    let autoOffers: any[] = [];
-    if (storedProducts) {
-      const products = JSON.parse(storedProducts);
-      const today = new Date();
-      products.forEach((product: any) => {
-        if (product.expirationDate) {
-          const expDate = new Date(product.expirationDate);
-          const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          if (diffDays > 0 && diffDays <= 20) {
-            let discount = 10 + ((20 - diffDays) * 2);
-            let priceWithDiscount = product.price * (1 - discount / 100);
-            if (priceWithDiscount < product.cost) {
-              discount = Math.round((1 - (product.cost / product.price)) * 100);
-            }
-            if (discount > 0 && product.isActive) {
-              autoOffers.push({
-                id: `auto-${product.id}`,
-                title: `¡Oferta por vencimiento! ${product.name}`,
-                description: `Descuento especial porque este producto vence en ${diffDays} días.`,
-                type: 'automatico',
-                discount,
-                discountType: 'percentage',
-                discountValue: discount,
-                productIds: [product.id],
-                startDate: today,
-                endDate: expDate,
-                isActive: true,
-                image: product.image || '',
-                terms: 'Oferta automática por vencimiento',
-                conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
-                targetAudience: 'general',
-                currentRedemptions: 0,
-                createdAt: today
-              });
-            }
-          }
-        }
+    fetch('http://localhost:3001/api/ofertas')
+      .then(res => res.json())
+      .then(data => {
+        // Adaptar los datos para la interfaz
+        const mapped = data.map((o: any) => ({
+          id: o.id_oferta,
+          title: o.nombre,
+          description: o.descripcion,
+          type: o.tipo_oferta || 'descuento',
+          discount: o.descuento_porcentaje || o.descuento_valor_fijo || 0,
+          startDate: o.fecha_inicio ? new Date(o.fecha_inicio) : undefined,
+          endDate: o.fecha_fin ? new Date(o.fecha_fin) : undefined,
+          isActive: o.estado === 'activa',
+          temporada: o.temporada,
+          prioridad: o.prioridad
+        }));
+        setOffers(mapped);
+      })
+      .catch(() => {
+        setOffers([]);
       });
-    }
-    // Mezclar y mostrar en la interfaz
-    setOffers([...parsedOffers, ...autoOffers]);
+
+    // Obtener productos en oferta por caducidad
+    fetch('http://localhost:3001/api/ofertas-caducidad')
+      .then(res => res.json())
+      .then(data => {
+        setExpiryOffers(data);
+      })
+      .catch(() => {
+        setExpiryOffers([]);
+      });
   }, []);
 
+  // Eliminar solo del estado (no elimina en la base de datos)
   const handleDelete = (id: string) => {
     if (window.confirm('¿Estás seguro de que quieres eliminar esta oferta?')) {
-      const updated = offers.filter(o => o.id !== id);
-      localStorage.setItem('offers', JSON.stringify(updated));
-      setOffers(updated);
+      setOffers(offers.filter(o => o.id !== id));
     }
   };
 
@@ -105,6 +86,41 @@ const OffersManagement: React.FC = () => {
           <Plus size={20} />
           Nueva Oferta
         </Link>
+      </div>
+
+      {/* Panel de ofertas por caducidad */}
+      <div className="card" style={{ marginBottom: '2rem', border: '2px solid #FFD700', background: '#FFFBEA' }}>
+        <div className="card-header" style={{ background: '#FFF3CD' }}>
+          <h3 className="card-title" style={{ color: '#B8860B' }}>
+            <Clock size={20} style={{ marginRight: 8 }} />
+            Productos en Oferta por Caducidad
+          </h3>
+        </div>
+        {expiryOffers.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#B8860B' }}>
+            <Clock size={48} style={{ marginBottom: '1rem' }} />
+            <h4>No hay productos próximos a caducar en oferta</h4>
+          </div>
+        ) : (
+          <div className="offers-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+            {expiryOffers.map((prod: any) => (
+              <div key={prod.id_lote} className="offer-card" style={{ border: '2px solid #FFD700', borderRadius: '12px', padding: '1.5rem', backgroundColor: '#FFFBEA', position: 'relative' }}>
+                <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                  <span className="badge badge-warning">Oferta Caducidad</span>
+                </div>
+                <h4 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#B8860B', marginBottom: '0.5rem' }}>{prod.nombre} <span style={{ fontSize: '0.9rem', color: '#666' }}>({prod.marca})</span></h4>
+                <div style={{ marginBottom: '0.5rem', color: '#666' }}>
+                  <strong>Precio Oferta:</strong> ${Number(prod.precio_venta).toFixed(2)} <br />
+                  <strong>Descuento:</strong> {prod.descuento_porcentaje}% <br />
+                  <strong>Vence:</strong> {format(new Date(prod.fecha_vencimiento), 'dd/MM/yyyy')}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#888' }}>
+                  <strong>Precio Costo:</strong> ${Number(prod.precio_costo_unitario).toFixed(2)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Estadísticas rápidas */}

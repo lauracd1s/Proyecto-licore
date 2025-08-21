@@ -1,32 +1,52 @@
+
 import React from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay } from 'date-fns';
 
 const PromotionCalendar: React.FC = () => {
-  // Leer ofertas desde localStorage
+  // Ofertas y temporadas desde el backend
   const [offers, setOffers] = React.useState<any[]>([]);
+  const [seasons, setSeasons] = React.useState<any[]>([]);
+  const [currentDate, setCurrentDate] = React.useState(new Date());
 
   React.useEffect(() => {
-    const stored = localStorage.getItem('offers');
-    if (stored) {
-      const parsed = JSON.parse(stored).map((o: any) => ({
-        ...o,
-        startDate: o.startDate ? new Date(o.startDate) : undefined,
-        endDate: o.endDate ? new Date(o.endDate) : undefined
-      }));
-      setOffers(parsed);
-    }
+    // Obtener ofertas
+    fetch('http://localhost:3001/api/ofertas')
+      .then(res => res.json())
+      .then(data => {
+        const mapped = data.map((o: any) => ({
+          id: o.id_oferta,
+          title: o.nombre,
+          description: o.descripcion,
+          startDate: o.fecha_inicio ? new Date(o.fecha_inicio) : undefined,
+          endDate: o.fecha_fin ? new Date(o.fecha_fin) : undefined,
+          isActive: o.estado === 'activa',
+          temporada: o.temporada,
+          id_temporada: o.id_temporada
+        }));
+        setOffers(mapped);
+      });
+    // Obtener temporadas
+    fetch('http://localhost:3001/api/temporadas')
+      .then(res => res.json())
+      .then(data => {
+        setSeasons(data);
+      });
   }, []);
-  const [currentDate, setCurrentDate] = React.useState(new Date());
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
   const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
+  // Buscar temporada por id
+  const getSeasonById = (id: number) => seasons.find((s: any) => s.id_temporada === id);
+
+  // Ofertas activas para un día
   const getOffersForDate = (date: Date) => {
-    return offers.filter(offer => 
-      offer.isActive && 
-      date >= offer.startDate && 
+    return offers.filter(offer =>
+      offer.isActive &&
+      offer.startDate && offer.endDate &&
+      date >= offer.startDate &&
       date <= offer.endDate
     );
   };
@@ -96,21 +116,24 @@ const PromotionCalendar: React.FC = () => {
                   {format(day, 'd')}
                 </div>
 
-                {dayOffers.map((offer) => (
-                  <div key={offer.id} style={{
-                    fontSize: '0.7rem',
-                    backgroundColor: '#8B4513',
-                    color: 'white',
-                    padding: '2px 4px',
-                    borderRadius: '3px',
-                    marginBottom: '2px',
-                    overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis'
-                  }}>
-                    {offer.title}
-                  </div>
-                ))}
+                {dayOffers.map((offer) => {
+                  const season = offer.id_temporada ? getSeasonById(offer.id_temporada) : null;
+                  return (
+                    <div key={offer.id} style={{
+                      fontSize: '0.7rem',
+                      backgroundColor: season ? season.color_tema : '#8B4513',
+                      color: 'white',
+                      padding: '2px 4px',
+                      borderRadius: '3px',
+                      marginBottom: '2px',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                      textOverflow: 'ellipsis'
+                    }}>
+                      {offer.title} {season ? `(${season.nombre})` : ''}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -123,22 +146,30 @@ const PromotionCalendar: React.FC = () => {
           <h3 className="card-title">Ofertas Activas Este Mes</h3>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-          {offers.filter(offer => offer.isActive).map(offer => (
-            <div key={offer.id} style={{
-              padding: '1rem',
-              border: '1px solid #E0E0E0',
-              borderRadius: '8px',
-              backgroundColor: '#f9f9f9'
-            }}>
-              <h4 style={{ color: '#8B4513', marginBottom: '0.5rem' }}>{offer.title}</h4>
-              <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-                {offer.description}
-              </p>
-              <p style={{ fontSize: '0.8rem', color: '#8B4513' }}>
-                {format(offer.startDate, 'dd/MM/yyyy')} - {format(offer.endDate, 'dd/MM/yyyy')}
-              </p>
-            </div>
-          ))}
+          {offers.filter(offer => offer.isActive).map(offer => {
+            const season = offer.id_temporada ? getSeasonById(offer.id_temporada) : null;
+            return (
+              <div key={offer.id} style={{
+                padding: '1rem',
+                border: '1px solid #E0E0E0',
+                borderRadius: '8px',
+                backgroundColor: season ? season.color_tema + '22' : '#f9f9f9'
+              }}>
+                <h4 style={{ color: season ? season.color_tema : '#8B4513', marginBottom: '0.5rem' }}>{offer.title}</h4>
+                <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+                  {offer.description}
+                </p>
+                {season && (
+                  <p style={{ fontSize: '0.8rem', color: season.color_tema }}>
+                    {season.nombre}: {season.descripcion}
+                  </p>
+                )}
+                <p style={{ fontSize: '0.8rem', color: season ? season.color_tema : '#8B4513' }}>
+                  {format(offer.startDate, 'dd/MM/yyyy')} - {format(offer.endDate, 'dd/MM/yyyy')}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

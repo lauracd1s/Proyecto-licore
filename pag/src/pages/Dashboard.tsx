@@ -11,12 +11,21 @@ import {
   Star,
   BarChart3
 } from 'lucide-react';
-import { useApp } from '../context/AppContext';
+
 
 const Dashboard: React.FC = () => {
-  const { dashboardMetrics } = useApp();
-
+  const [dashboardMetrics, setDashboardMetrics] = React.useState<any>(null);
   const COLORS = ['#272727', '#D4AA7D', '#EFD09F', '#666666', '#999999', '#CCCCCC'];
+
+  React.useEffect(() => {
+    fetch('http://localhost:3001/api/dashboard')
+      .then(res => res.json())
+      .then(data => setDashboardMetrics(data));
+  }, []);
+
+  if (!dashboardMetrics) {
+    return <div className="dashboard"><div className="page-header"><h1 className="page-title"><BarChart3 size={28} />Dashboard Principal</h1></div><p>Cargando métricas...</p></div>;
+  }
 
   return (
     <div className="dashboard">
@@ -123,7 +132,7 @@ const Dashboard: React.FC = () => {
                 dataKey="amount"
                 label={(entry) => `${entry.category} ${entry.percentage}%`}
               >
-                {dashboardMetrics.salesByCategory.map((_entry, index) => (
+                {dashboardMetrics.salesByCategory.map((_entry: { category: string; amount: number; percentage: string }, index: number) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
@@ -150,7 +159,7 @@ const Dashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {dashboardMetrics.topSellingProducts.map((item, index) => (
+              {dashboardMetrics.topSellingProducts.map((item: { product: { id: number; name: string; brand: string; category: string }; quantity: number; revenue: number }, index: number) => (
                 <tr key={item.product.id}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -175,7 +184,7 @@ const Dashboard: React.FC = () => {
                     </div>
                   </td>
                   <td>
-                    <span className={`badge badge-${
+                    <span className={`badge badge-$${
                       item.product.category === 'cerveza' ? 'warning' : 
                       item.product.category === 'whisky' ? 'success' : 'info'
                     }`}>
@@ -194,12 +203,12 @@ const Dashboard: React.FC = () => {
                         overflow: 'hidden'
                       }}>
                         <div style={{
-                          width: `${(item.revenue / dashboardMetrics.topSellingProducts[0].revenue) * 100}%`,
+                          width: `${dashboardMetrics.topSellingProducts[0].revenue > 0 ? (item.revenue / dashboardMetrics.topSellingProducts[0].revenue) * 100 : 0}%`,
                           height: '100%',
                           backgroundColor: '#8B4513'
                         }} />
                       </div>
-                      {((item.revenue / dashboardMetrics.totalSales) * 100).toFixed(1)}%
+                      {dashboardMetrics.totalSales > 0 ? ((item.revenue / dashboardMetrics.totalSales) * 100).toFixed(1) : 0}%
                     </div>
                   </td>
                 </tr>

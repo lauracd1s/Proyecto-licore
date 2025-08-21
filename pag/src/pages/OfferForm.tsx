@@ -47,7 +47,6 @@ const OfferForm: React.FC = () => {
     discountType: 'percentage' as OfferDisplay['discountType'],
     targetAudience: 'general' as OfferDisplay['targetAudience'],
     conditions: '',
-    maxRedemptions: undefined as number | undefined,
     startDate: '',
     endDate: '',
     isActive: true,
@@ -64,42 +63,51 @@ const OfferForm: React.FC = () => {
     codigo_promocional: '',
     descuento_porcentaje: undefined as number | undefined,
     descuento_valor_fijo: undefined as number | undefined,
-    productos_gratis: 0,
     se_combina_con_otras: false,
     prioridad: 1,
     aplicaciones: [] as any[],
     criterios: [] as any[]
   });
 
-  // Carga de datos de edición (si existiera implementación de lectura de oferta específica)
+  // Carga de datos de edición desde el backend
   useEffect(() => {
-    // Mantener por compatibilidad: si venimos de localStorage (versión anterior)
-    const stored = localStorage.getItem('offers');
-    if (isEdit && id && stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        const offer = parsed.find((o: any) => o.id === id);
-        if (offer) {
+    if (isEdit && id) {
+      fetch(`http://localhost:3001/api/ofertas/${id}`)
+        .then(res => res.json())
+        .then((offer: any) => {
           setFormData(prev => ({
             ...prev,
-            title: offer.title,
-            description: offer.description,
-            type: offer.type,
-            discount: offer.discount,
-            discountType: offer.discountType,
-            targetAudience: offer.targetAudience,
-            conditions: offer.conditions,
-            maxRedemptions: offer.maxRedemptions,
-            startDate: offer.startDate ? new Date(offer.startDate).toISOString().split('T')[0] : '',
-            endDate: offer.endDate ? new Date(offer.endDate).toISOString().split('T')[0] : '',
-            isActive: offer.isActive,
-            image: offer.image,
-            terms: offer.terms,
+            title: offer.nombre || '',
+            description: offer.descripcion || '',
+            type: offer.tipo_oferta || 'descuento',
+            discount: offer.descuento_porcentaje || offer.descuento_valor_fijo || 0,
+            discountType: offer.descuento_porcentaje ? 'percentage' : 'fixed',
+            targetAudience: 'general', // Ajusta si tienes este dato
+            conditions: '', // Ajusta si tienes este dato
+            startDate: offer.fecha_inicio ? new Date(offer.fecha_inicio).toISOString().split('T')[0] : '',
+            endDate: offer.fecha_fin ? new Date(offer.fecha_fin).toISOString().split('T')[0] : '',
+            isActive: offer.estado === 'activa',
+            image: '',
+            terms: '',
+            id_tipo_oferta: offer.id_tipo_oferta,
+            id_temporada: offer.id_temporada,
+            cantidad_minima: offer.cantidad_minima || 1,
+            valor_compra_minima: offer.valor_compra_minima || 0,
+            limite_usos_por_cliente: offer.limite_usos_por_cliente,
+            limite_usos_total: offer.limite_usos_total,
+            requiere_codigo: offer.requiere_codigo,
+            codigo_promocional: offer.codigo_promocional || '',
+            descuento_porcentaje: offer.descuento_porcentaje,
+            descuento_valor_fijo: offer.descuento_valor_fijo,
+            se_combina_con_otras: offer.se_combina_con_otras,
+            prioridad: offer.prioridad || 1,
+            aplicaciones: offer.aplicaciones || [],
+            criterios: offer.criterios || []
           }));
-        }
-      } catch (e) {
-        // ignorar
-      }
+        })
+        .catch(() => {
+          // Si falla, no modifica el formData
+        });
     }
   }, [isEdit, id]);
 
@@ -115,13 +123,12 @@ const OfferForm: React.FC = () => {
       fecha_fin: formData.endDate,
       cantidad_minima: formData.cantidad_minima,
       valor_compra_minima: formData.valor_compra_minima,
-      limite_usos_por_cliente: formData.limite_usos_por_cliente ?? formData.maxRedemptions ?? null,
+    limite_usos_por_cliente: formData.limite_usos_por_cliente ?? null,
       limite_usos_total: formData.limite_usos_total ?? null,
       requiere_codigo: formData.requiere_codigo,
       codigo_promocional: formData.codigo_promocional || null,
       descuento_porcentaje: formData.discountType === 'percentage' ? formData.discount : formData.descuento_porcentaje ?? null,
       descuento_valor_fijo: formData.discountType === 'fixed' ? formData.discount : formData.descuento_valor_fijo ?? null,
-      productos_gratis: formData.productos_gratis,
       se_combina_con_otras: formData.se_combina_con_otras,
       prioridad: formData.prioridad,
       estado: formData.isActive ? 'activa' : 'inactiva',
@@ -254,23 +261,6 @@ const OfferForm: React.FC = () => {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Máximo de Redenciones</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={formData.maxRedemptions || ''}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
-                      maxRedemptions: e.target.value ? Number(e.target.value) : undefined
-                    }))}
-                    min={1}
-                    placeholder="Sin límite"
-                  />
-                  <small style={{ color: '#666', fontSize: '0.8rem' }}>
-                    Deja vacío para sin límite
-                  </small>
-                </div>
 
                 <div className="form-group">
                   <label className="form-label">Condiciones Especiales</label>
@@ -316,16 +306,6 @@ const OfferForm: React.FC = () => {
                     value={formData.limite_usos_total || ''}
                     onChange={(e) => setFormData(prev => ({ ...prev, limite_usos_total: e.target.value ? Number(e.target.value) : undefined }))}
                     placeholder="Sin límite"
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Productos gratis</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    min={0}
-                    value={formData.productos_gratis}
-                    onChange={(e) => setFormData(prev => ({ ...prev, productos_gratis: Number(e.target.value) }))}
                   />
                 </div>
               </div>
@@ -555,39 +535,6 @@ const OfferForm: React.FC = () => {
               )}
 
               {/* Criterios adicionales */}
-              <h3 style={{ marginTop: '1.25rem', marginBottom: '0.5rem', color: '#8B4513' }}>Criterios Adicionales</h3>
-              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <button type="button" className="btn btn-outline" onClick={() => setFormData(prev => ({ ...prev, criterios: [...prev.criterios, { tipo_criterio: 'ubicacion', operador: '=', valor: '' }] }))}>
-                  <Plus size={16} /> Criterio
-                </button>
-              </div>
-              {formData.criterios.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {formData.criterios.map((cr, idx) => (
-                    <div key={idx} style={{ border: '1px solid #E0E0E0', padding: '0.75rem', borderRadius: '8px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.75rem', alignItems: 'center' }}>
-                        <strong>{cr.tipo_criterio}</strong>
-                        <button type="button" className="btn btn-danger" onClick={() => setFormData(prev => ({ ...prev, criterios: prev.criterios.filter((_, i) => i !== idx) }))}>
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginTop: '0.5rem' }}>
-                        <input className="form-input" placeholder="Tipo (edad, ubicacion, historial_compras)" value={cr.tipo_criterio} onChange={(e) => setFormData(prev => ({ ...prev, criterios: prev.criterios.map((x, i) => i === idx ? { ...x, tipo_criterio: e.target.value } : x) }))} />
-                        <select className="form-select" value={cr.operador} onChange={(e) => setFormData(prev => ({ ...prev, criterios: prev.criterios.map((x, i) => i === idx ? { ...x, operador: e.target.value } : x) }))}>
-                          <option value="=">=</option>
-                          <option value=">">&gt;</option>
-                          <option value="<">&lt;</option>
-                          <option value=">=">=</option>
-                          <option value="<=">=</option>
-                          <option value="IN">IN</option>
-                          <option value="LIKE">LIKE</option>
-                        </select>
-                        <input className="form-input" placeholder="Valor" value={cr.valor} onChange={(e) => setFormData(prev => ({ ...prev, criterios: prev.criterios.map((x, i) => i === idx ? { ...x, valor: e.target.value } : x) }))} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
 

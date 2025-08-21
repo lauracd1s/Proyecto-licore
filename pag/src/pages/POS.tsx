@@ -1,106 +1,116 @@
 import React, { useState } from 'react';
-import { CreditCard, Plus, Minus, ShoppingCart, Tag, Percent, Clock, AlertTriangle } from 'lucide-react';
-import { useApp } from '../context/AppContext';
-import type { ProductDisplay, SaleItemDisplay } from '../types';
+import { CreditCard, Plus, Minus, ShoppingCart, Tag, AlertTriangle } from 'lucide-react';
+import type { ProductDisplay, SaleItemDisplay, OfferDisplay, CustomerDisplay } from '../types';
 
 const POS: React.FC = () => {
-  // Leer productos desde localStorage
+
+  // Estado para productos, ofertas y clientes
   const [products, setProducts] = useState<ProductDisplay[]>([]);
-  // Leer ofertas desde localStorage (incluye automáticas)
-  const [offers, setOffers] = useState<any[]>([]);
-  const { customers, addSaleDisplay } = useApp();
+  const [offers, setOffers] = useState<OfferDisplay[]>([]);
+  const [customers, setCustomers] = useState<CustomerDisplay[]>([]);
 
+  // Cargar productos, ofertas y clientes desde el backend
   React.useEffect(() => {
-    // Cargar productos
-    let parsedProducts: ProductDisplay[] = [];
-    try {
-      const storedProducts = localStorage.getItem('products');
-      if (storedProducts) {
-        const arr = JSON.parse(storedProducts);
-        if (Array.isArray(arr)) {
-          parsedProducts = arr.map((p: any) => ({
-            ...p,
-            createdAt: p.createdAt ? new Date(p.createdAt) : undefined,
-            expirationDate: p.expirationDate ? new Date(p.expirationDate) : undefined
-          }));
-        }
+    const fetchData = async () => {
+      try {
+        const [productsRes, offersRes, customersRes, caducidadRes] = await Promise.all([
+          fetch('http://localhost:3001/api/productos'),
+          fetch('http://localhost:3001/api/ofertas'),
+          fetch('http://localhost:3001/api/clientes'),
+          fetch('http://localhost:3001/api/ofertas-caducidad')
+        ]);
+        const productsData = await productsRes.json();
+        const offersData = await offersRes.json();
+        const customersData = await customersRes.json();
+        const caducidadData = await caducidadRes.json();
+
+        // Normalizar productos
+        const productsNorm: ProductDisplay[] = productsData.map((p: any) => ({
+          id: p.id.toString(),
+          name: p.producto || p.nombre,
+          category: p.categoria || '',
+          brand: p.marca || '',
+          price: Number(p.precio),
+          cost: Number(p.precio_costo_unitario) || 0,
+          stock: Number(p.stock) || 0,
+          minStock: Number(p.stock_minimo) || 0,
+          image: '',
+          unidadMedida: '',
+          description: p.descripcion || '',
+          alcoholContent: p.graduacion_alcoholica || 0,
+          volume: p.contenido || 0,
+          barcode: p.codigo_barras || '',
+          isActive: p.estado === 'activo',
+          createdAt: new Date(),
+          expirationDate: p.fecha_vencimiento ? p.fecha_vencimiento : undefined
+        }));
+        setProducts(productsNorm);
+
+        // Normalizar ofertas
+        const offersNorm: OfferDisplay[] = offersData.map((o: any) => ({
+          id: o.id_oferta?.toString() || o.id?.toString(),
+          title: o.nombre || o.title,
+          description: o.descripcion || '',
+          type: o.tipo_oferta || 'descuento',
+          discount: o.descuento_porcentaje || o.discount || 0,
+          discountType: o.descuento_porcentaje ? 'percentage' : 'fixed',
+          discountValue: o.descuento_porcentaje || o.descuento_valor_fijo || 0,
+          productIds: o.aplicaciones?.map((a: any) => a.id_producto?.toString()).filter(Boolean) || [],
+          startDate: o.fecha_inicio ? new Date(o.fecha_inicio) : new Date(),
+          endDate: o.fecha_fin ? new Date(o.fecha_fin) : new Date(),
+          isActive: o.estado === 'activa',
+          image: '',
+          terms: '',
+          conditions: '',
+          targetAudience: 'general',
+          maxRedemptions: undefined,
+          currentRedemptions: 0,
+          createdAt: new Date()
+        }));
+
+        // Ofertas automáticas por caducidad
+        const caducidadOffers: OfferDisplay[] = caducidadData.map((c: any) => ({
+          id: `caducidad-${c.id_producto}`,
+          title: `Oferta por caducidad - ${c.nombre}`,
+          description: `Descuento por vencimiento (${c.descuento_porcentaje}%)`,
+          type: 'automatico',
+          discount: c.descuento_porcentaje,
+          discountType: 'percentage',
+          discountValue: c.descuento_porcentaje,
+          productIds: [c.id_producto.toString()],
+          startDate: new Date(),
+          endDate: c.fecha_vencimiento ? new Date(c.fecha_vencimiento) : new Date(),
+          isActive: true,
+          image: '',
+          terms: '',
+          conditions: '',
+          targetAudience: 'general',
+          maxRedemptions: undefined,
+          currentRedemptions: 0,
+          createdAt: new Date()
+        }));
+
+        setOffers([...offersNorm, ...caducidadOffers]);
+        setCustomers(customersData.map((c: any) => ({
+          id: c.id?.toString(),
+          name: c.nombre + (c.apellido ? ' ' + c.apellido : ''),
+          email: '',
+          phone: '',
+          address: '',
+          loyaltyPoints: 0,
+          totalPurchases: 0,
+          membershipLevel: 'bronce',
+          isVip: false,
+          registrationDate: new Date(),
+          createdAt: new Date()
+        })));
+      } catch (err) {
+        setProducts([]);
+        setOffers([]);
+        setCustomers([]);
       }
-    } catch (e) {
-      parsedProducts = [];
-    }
-    setProducts(parsedProducts);
-    console.log('Productos cargados:', parsedProducts);
-
-    // Cargar ofertas manuales
-    let parsedOffers: any[] = [];
-    try {
-      const storedOffers = localStorage.getItem('offers');
-      if (storedOffers) {
-        const arr = JSON.parse(storedOffers);
-        if (Array.isArray(arr)) {
-          parsedOffers = arr.map((o: any) => {
-            let startDate = o.startDate;
-            let endDate = o.endDate;
-            if (typeof startDate === 'string') startDate = new Date(startDate);
-            if (typeof endDate === 'string') endDate = new Date(endDate);
-            return {
-              ...o,
-              startDate,
-              endDate
-            };
-          });
-        }
-      }
-    } catch (e) {
-      parsedOffers = [];
-    }
-
-    // Generar ofertas automáticas por vencimiento
-    let autoOffers: any[] = [];
-    if (parsedProducts.length > 0) {
-      const today = new Date();
-      parsedProducts.forEach((product: any) => {
-        if (product.expirationDate) {
-          const expDate = new Date(product.expirationDate);
-          const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          if (diffDays > 0 && diffDays <= 20) {
-            let discount = 10 + ((20 - diffDays) * 2);
-            let priceWithDiscount = product.price * (1 - discount / 100);
-            if (priceWithDiscount < product.cost) {
-              discount = Math.round((1 - (product.cost / product.price)) * 100);
-            }
-            if (discount > 0 && product.isActive) {
-              autoOffers.push({
-                id: `auto-${product.id}`,
-                title: `¡Oferta por vencimiento! ${product.name}`,
-                description: `Descuento especial porque este producto vence en ${diffDays} días.`,
-                type: 'automatico',
-                discount,
-                discountType: 'percentage',
-                discountValue: discount,
-                productIds: [product.id],
-                startDate: today,
-                endDate: expDate,
-                isActive: true,
-                image: product.image || '',
-                terms: 'Oferta automática por vencimiento',
-                conditions: 'Válido hasta agotar existencias o fecha de vencimiento',
-                targetAudience: 'general',
-                currentRedemptions: 0,
-                createdAt: today,
-                daysUntilExpiry: diffDays,
-                isAutomatic: true
-              });
-            }
-          }
-        }
-      });
-    }
-
-    // Mezclar ofertas manuales y automáticas
-    const allOffers = [...parsedOffers, ...autoOffers];
-    setOffers(allOffers);
-    console.log('Todas las ofertas cargadas:', allOffers);
+    };
+    fetchData();
   }, []);
 
   const [cartItems, setCartItems] = useState<SaleItemDisplay[]>([]);
@@ -145,12 +155,15 @@ const POS: React.FC = () => {
           unitPrice = Math.max(0, product.price - discount);
           offerLabel = `$${offer.discount} OFF`;
         }
-      } else if (offer.type === 'automatico') {
-        // Ofertas automáticas por vencimiento
+      } 
+      // Eliminar comparación directa con 'automatico' para evitar error de tipos
+      // Usar solo el título para identificar ofertas de caducidad
+      else if (offer.title?.includes('caducidad')) {
+        // Ofertas por caducidad (detectadas por el título)
         if (offer.discountType === 'percentage') {
           discount = (product.price * offer.discount) / 100;
           unitPrice = product.price - discount;
-          offerLabel = `${offer.discount}% OFF - Vence en ${offer.daysUntilExpiry || 0} días`;
+          offerLabel = `${offer.discount}% OFF por vencimiento`;
         }
       } else if (offer.type === 'precio_especial') {
         unitPrice = offer.discount;
@@ -168,7 +181,7 @@ const POS: React.FC = () => {
         specialTotal = (sets * 2 * product.price) + (remainder * product.price);
         discount = (quantity * product.price) - specialTotal;
         offerLabel = '3x2';
-      }
+      } 
       
       // Asegurar que no haya precios negativos
       if (unitPrice < 0) unitPrice = 0;
@@ -182,8 +195,7 @@ const POS: React.FC = () => {
       discount: totalDiscount, 
       offerType, 
       offerLabel, 
-      total,
-      isAutomatic: offer?.isAutomatic || false
+      total
     };
   };
 
@@ -235,60 +247,71 @@ const POS: React.FC = () => {
   const tax = subtotal * 0.16; // 16% IVA
   const total = subtotal + tax;
 
-  const processSale = () => {
+  // Procesar venta: enviar al backend y actualizar stock
+  const processSale = async () => {
     if (cartItems.length === 0) return;
 
-    const saleData = {
-      id: Date.now().toString(),
-      customerId: selectedCustomer || undefined,
-      items: cartItems,
+    // Construir datos para la API
+    const venta = {
+      customerId: selectedCustomer || null,
+      items: cartItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        discount: item.discount,
+        total: item.total
+      })),
       subtotal,
       discount: totalDiscounts,
       tax,
       total,
       paymentMethod,
-      status: 'completada' as const,
+      status: 'completada',
       completedAt: new Date(),
       cashierId: 'cashier1',
       createdAt: new Date()
     };
 
-    // Guardar la venta en localStorage
-    const storedSales = localStorage.getItem('sales');
-    let salesArr = [];
-    if (storedSales) {
-      try {
-        salesArr = JSON.parse(storedSales);
-      } catch (e) {
-        salesArr = [];
+    try {
+      // Enviar venta al backend (puedes crear un endpoint /api/ventas)
+      const res = await fetch('http://localhost:3001/api/ventas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(venta)
+      });
+      if (res.ok) {
+        // Actualizar productos (recargar desde backend)
+        const productsRes = await fetch('http://localhost:3001/api/productos');
+        const productsData = await productsRes.json();
+        const productsNorm: ProductDisplay[] = productsData.map((p: any) => ({
+          id: p.id.toString(),
+          name: p.producto || p.nombre,
+          category: p.categoria || '',
+          brand: p.marca || '',
+          price: Number(p.precio),
+          cost: Number(p.precio_costo_unitario) || 0,
+          stock: Number(p.stock) || 0,
+          minStock: Number(p.stock_minimo) || 0,
+          image: '',
+          unidadMedida: '',
+          description: p.descripcion || '',
+          alcoholContent: p.graduacion_alcoholica || 0,
+          volume: p.contenido || 0,
+          barcode: p.codigo_barras || '',
+          isActive: p.estado === 'activo',
+          createdAt: new Date(),
+          expirationDate: p.fecha_vencimiento ? p.fecha_vencimiento : undefined
+        }));
+        setProducts(productsNorm);
+        setCartItems([]);
+        setSelectedCustomer('');
+        alert('Venta procesada exitosamente');
+      } else {
+        alert('Error al procesar la venta');
       }
+    } catch (err) {
+      alert('Error de conexión al procesar la venta');
     }
-    salesArr.push(saleData);
-    localStorage.setItem('sales', JSON.stringify(salesArr));
-
-    // Restar la cantidad vendida al stock de cada producto
-    const storedProducts = localStorage.getItem('products');
-    let productsArr = [];
-    if (storedProducts) {
-      try {
-        productsArr = JSON.parse(storedProducts);
-      } catch (e) {
-        productsArr = [];
-      }
-    }
-    saleData.items.forEach(saleItem => {
-      const prodIndex = productsArr.findIndex((p: any) => p.id === saleItem.productId);
-      if (prodIndex !== -1) {
-        productsArr[prodIndex].stock = Math.max(0, (productsArr[prodIndex].stock || 0) - saleItem.quantity);
-      }
-    });
-    localStorage.setItem('products', JSON.stringify(productsArr));
-    setProducts(productsArr);
-
-    addSaleDisplay(saleData);
-    setCartItems([]);
-    setSelectedCustomer('');
-    alert('Venta procesada exitosamente');
   };
 
   // Función para verificar si un producto tiene oferta activa (para mostrar en la lista)
@@ -296,15 +319,13 @@ const POS: React.FC = () => {
     return !!getActiveOfferForProduct(productId);
   };
 
-  // Función para verificar si la oferta es automática
+  // Función para verificar si la oferta es de caducidad
   const getOfferDisplayInfo = (productId: string) => {
     const offer = getActiveOfferForProduct(productId);
     if (!offer) return null;
-
     return {
       ...offer,
-      isAutomatic: offer.type === 'automatico',
-      daysUntilExpiry: offer.daysUntilExpiry || 0
+      isCaducidad: offer.title?.includes('caducidad') || false
     };
   };
 
@@ -335,39 +356,53 @@ const POS: React.FC = () => {
                   style={{
                     padding: '1rem',
                     border: hasOffer 
-                      ? (offerInfo?.isAutomatic ? '2px solid #ff6b35' : '2px solid #28a745') 
+                      ? (offerInfo?.isCaducidad ? '2px solid #ff6b35' : '2px solid #28a745') 
                       : '2px solid #E0E0E0',
                     borderRadius: '8px',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                     position: 'relative',
                     backgroundColor: hasOffer 
-                      ? (offerInfo?.isAutomatic ? '#fff7f5' : '#f8fff9') 
+                      ? (offerInfo?.isCaducidad ? '#fff7f5' : '#f8fff9') 
                       : 'white'
                   }}
                   onMouseOver={e => (e.currentTarget.style.borderColor = hasOffer 
-                    ? (offerInfo?.isAutomatic ? '#e55722' : '#1e7e34') 
+                    ? (offerInfo?.isCaducidad ? '#e55722' : '#1e7e34') 
                     : '#8B4513')}
                   onMouseOut={e => (e.currentTarget.style.borderColor = hasOffer 
-                    ? (offerInfo?.isAutomatic ? '#ff6b35' : '#28a745') 
+                    ? (offerInfo?.isCaducidad ? '#ff6b35' : '#28a745') 
                     : '#E0E0E0')}
                 >
-                  {hasOffer && (
+                  {/* Badge visual de oferta */}
+                  {hasOffer && offerInfo && (
                     <div style={{
                       position: 'absolute',
-                      top: '-8px',
-                      right: '-8px',
-                      backgroundColor: offerInfo?.isAutomatic ? '#ff6b35' : '#28a745',
+                      top: '8px',
+                      left: '8px',
+                      backgroundColor: offerInfo.isCaducidad ? '#ff6b35' : '#28a745',
                       color: 'white',
-                      borderRadius: '50%',
-                      width: '24px',
-                      height: '24px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '12px'
+                      borderRadius: '12px',
+                      padding: '2px 10px',
+                      fontWeight: 'bold',
+                      fontSize: '0.8rem',
+                      zIndex: 2,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
                     }}>
-                      {offerInfo?.isAutomatic ? <Clock size={12} /> : <Percent size={12} />}
+                      {offerInfo.isCaducidad ? (
+                        <>
+                          <AlertTriangle size={10} style={{ marginRight: '2px' }} />
+                          {`${offerInfo.discount}% OFF por vencimiento`}
+                        </>
+                      ) : (
+                        <>
+                          <Tag size={10} style={{ marginRight: '2px' }} />
+                          {offerInfo.type === 'descuento'
+                            ? `${offerInfo.discount}${offerInfo.discountType === 'percentage' ? '%' : '$'} OFF`
+                            : offerInfo.type === 'precio_especial'
+                            ? `Precio especial $${offerInfo.discount}`
+                            : offerInfo.type.replace('_', ' ').toUpperCase()}
+                        </>
+                      )}
                     </div>
                   )}
                   
@@ -381,20 +416,20 @@ const POS: React.FC = () => {
                   {hasOffer && offerInfo && (
                     <div style={{
                       fontSize: '0.75rem',
-                      color: offerInfo.isAutomatic ? '#ff6b35' : '#28a745',
+                      color: offerInfo.isCaducidad ? '#ff6b35' : '#28a745',
                       fontWeight: 'bold',
                       marginBottom: '0.5rem',
                       padding: '2px 6px',
-                      backgroundColor: offerInfo.isAutomatic ? '#fff0eb' : '#d4edda',
+                      backgroundColor: offerInfo.isCaducidad ? '#fff0eb' : '#d4edda',
                       borderRadius: '4px',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '2px'
                     }}>
-                      {offerInfo.isAutomatic ? (
+                      {offerInfo.isCaducidad ? (
                         <>
                           <AlertTriangle size={10} />
-                          {`${offerInfo.discount}% OFF - Vence en ${offerInfo.daysUntilExpiry} días`}
+                          {`${offerInfo.discount}% OFF por vencimiento`}
                         </>
                       ) : (
                         <>
@@ -455,7 +490,7 @@ const POS: React.FC = () => {
               </div>
             ) : (
               cartItems.map(item => {
-                const isAutomatic = item.offerType === 'automatico';
+                const isCaducidad = item.offerLabel?.includes('vencimiento');
                 return (
                   <div key={item.productId} style={{
                     display: 'flex',
@@ -463,12 +498,12 @@ const POS: React.FC = () => {
                     alignItems: 'center',
                     padding: '1rem',
                     border: item.offerLabel 
-                      ? (isAutomatic ? '2px solid #ff6b35' : '2px solid #28a745') 
+                      ? (isCaducidad ? '2px solid #ff6b35' : '2px solid #28a745') 
                       : '1px solid #E0E0E0',
                     borderRadius: '8px',
                     marginBottom: '0.5rem',
                     backgroundColor: item.offerLabel 
-                      ? (isAutomatic ? '#fff7f5' : '#f8fff9') 
+                      ? (isCaducidad ? '#fff7f5' : '#f8fff9') 
                       : 'white'
                   }}>
                     <div style={{ flex: 1 }}>
@@ -477,16 +512,27 @@ const POS: React.FC = () => {
                         {item.offerLabel && (
                           <span style={{
                             fontSize: '0.7rem',
-                            backgroundColor: isAutomatic ? '#ff6b35' : '#28a745',
+                            backgroundColor: isCaducidad ? '#ff6b35' : '#28a745',
                             color: 'white',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            fontWeight: 'bold',
+                            marginLeft: '0.5rem',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '2px'
                           }}>
-                            {isAutomatic ? <Clock size={10} /> : <Tag size={10} />}
-                            {item.offerLabel}
+                            {isCaducidad ? (
+                              <>
+                                <AlertTriangle size={12} />
+                                {item.offerLabel}
+                              </>
+                            ) : (
+                              <>
+                                <Tag size={12} />
+                                {item.offerLabel}
+                              </>
+                            )}
                           </span>
                         )}
                       </div>
@@ -495,7 +541,7 @@ const POS: React.FC = () => {
                         {item.offerLabel && item.unitPrice !== item.product.price && (
                           <span style={{ 
                             marginLeft: '0.5rem', 
-                            color: isAutomatic ? '#ff6b35' : '#28a745', 
+                            color: isCaducidad ? '#ff6b35' : '#28a745', 
                             fontWeight: 'bold' 
                           }}>
                             → ${item.unitPrice.toFixed(2)} c/u
@@ -505,12 +551,12 @@ const POS: React.FC = () => {
                       {item.discount > 0 && (
                         <div style={{ 
                           fontSize: '0.75rem', 
-                          color: isAutomatic ? '#ff6b35' : '#28a745', 
+                          color: isCaducidad ? '#ff6b35' : '#28a745', 
                           fontWeight: 'bold' 
                         }}>
-                          {isAutomatic && <AlertTriangle size={12} style={{ marginRight: '2px' }} />}
+                          {isCaducidad && <AlertTriangle size={12} style={{ marginRight: '2px' }} />}
                           Ahorro total: -${item.discount.toFixed(2)}
-                          {isAutomatic && ' (Por vencimiento)'}
+                          {isCaducidad && ' (Por vencimiento)'}
                         </div>
                       )}
                     </div>

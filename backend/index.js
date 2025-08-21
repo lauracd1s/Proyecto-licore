@@ -1,9 +1,4 @@
 
-
-
-
-
-
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -303,7 +298,9 @@ app.put('/api/productos/:id', async (req, res) => {
   }
 });
   // Endpoint para crear una oferta y sus productos relacionados
+  // Endpoint para crear una oferta y sus productos relacionados
   app.post('/api/ofertas', async (req, res) => {
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -534,6 +531,391 @@ app.get('/api/clientes', async (req, res) => {
   }
 });
 
+// Endpoint para aplicar descuentos dinámicos a productos próximos a caducar
+app.post('/api/aplicar-descuentos-caducidad', async (req, res) => {
+  try {
+    // Buscar lotes que vencen en los próximos 30 días y están activos
+    const lotes = await pool.query(`
+      SELECT l.id_lote, l.id_producto, l.fecha_vencimiento, l.precio_costo_unitario, p.precio_venta
+      FROM lote l
+      JOIN producto p ON p.id_producto = l.id_producto
+      WHERE l.estado = 'activo'
+        AND l.fecha_vencimiento IS NOT NULL
+        AND l.fecha_vencimiento >= CURRENT_DATE
+        AND l.fecha_vencimiento <= CURRENT_DATE + INTERVAL '30 days'
+    `);
+
+    let actualizados = [];
+    for (const lote of lotes.rows) {
+      const dias_restantes = Math.ceil((new Date(lote.fecha_vencimiento) - new Date()) / (1000 * 60 * 60 * 24));
+      // Descuento: 10% si faltan 30-21 días, 20% si 20-11 días, 30% si 10-1 días
+      let descuento = 0;
+      if (dias_restantes <= 10) descuento = 0.3;
+      else if (dias_restantes <= 20) descuento = 0.2;
+      else descuento = 0.1;
+      const precio_descuento = Math.max(
+        Number(lote.precio_costo_unitario),
+        Number(lote.precio_venta) * (1 - descuento)
+      );
+      // Solo actualiza si el precio de venta baja y sigue siendo mayor al costo
+      if (precio_descuento < Number(lote.precio_venta)) {
+        await pool.query(
+          'UPDATE producto SET precio_venta = $1 WHERE id_producto = $2',
+          [precio_descuento, lote.id_producto]
+        );
+        actualizados.push({
+          id_producto: lote.id_producto,
+          id_lote: lote.id_lote,
+          precio_venta: precio_descuento,
+          descuento: descuento,
+          dias_restantes
+        });
+      }
+    }
+    res.json({ actualizados });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al aplicar descuentos por caducidad' });
+  }
+});
+
+// Endpoint para obtener productos en oferta por caducidad
+app.get('/api/ofertas-caducidad', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT p.id_producto, p.nombre, p.marca, p.precio_venta, l.fecha_vencimiento, l.precio_costo_unitario,
+        (CASE 
+          WHEN l.fecha_vencimiento <= CURRENT_DATE + INTERVAL '10 days' THEN 30
+          WHEN l.fecha_vencimiento <= CURRENT_DATE + INTERVAL '20 days' THEN 20
+          ELSE 10
+        END) AS descuento_porcentaje,
+        l.id_lote
+      FROM lote l
+      JOIN producto p ON p.id_producto = l.id_producto
+      WHERE l.estado = 'activo'
+        AND l.fecha_vencimiento IS NOT NULL
+        AND l.fecha_vencimiento >= CURRENT_DATE
+        AND l.fecha_vencimiento <= CURRENT_DATE + INTERVAL '30 days'
+      ORDER BY l.fecha_vencimiento ASC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener productos en oferta por caducidad' });
+  }
+});
+
+
+// Endpoint para registrar una venta y actualizar el stock
+app.post('/api/ventas', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const {
+      customerId,
+      items,
+      subtotal,
+      discount,
+      tax,
+      total,
+      paymentMethod,
+      status,
+      completedAt,
+      cashierId,
+      createdAt
+    } = req.body;
+
+    // Crear factura
+    const facturaRes = await client.query(
+      `INSERT INTO factura (
+        id_cliente,
+        id_empleado,
+        id_forma_pago,
+        numero_factura,
+        fecha_factura,
+        subtotal,
+        total_descuentos,
+        impuesto,
+        total_factura,
+        estado
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+      ) RETURNING id_factura`,
+      [
+        customerId ? Number(customerId) : null,
+        1, // id_empleado fijo (puedes cambiarlo)
+        1, // id_forma_pago fijo (puedes mapearlo según paymentMethod)
+        'F-' + Date.now(),
+        new Date(),
+        subtotal,
+        discount,
+        tax,
+        total,
+        status || 'completada'
+      ]
+    );
+    const id_factura = facturaRes.rows[0].id_factura;
+
+    // Insertar detalle_factura y actualizar stock
+    for (const item of items) {
+      // Insertar detalle
+      await client.query(
+        `INSERT INTO detalle_factura (
+          id_factura,
+          id_producto,
+          cantidad,
+          precio_unitario,
+          costo_unitario,
+          descuento_unitario,
+          subtotal_linea
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          id_factura,
+          Number(item.productId),
+          item.quantity,
+          item.unitPrice,
+          0, // costo_unitario (puedes obtenerlo si lo necesitas)
+          item.discount,
+          item.total
+        ]
+      );
+
+      // Actualizar stock en lote_inventario (restar cantidad vendida)
+      // Buscar lote activo más reciente para el producto
+      const loteRes = await client.query(
+        `SELECT l.id_lote FROM lote l
+         JOIN lote_inventario li ON li.id_lote = l.id_lote
+         WHERE l.id_producto = $1 AND l.estado = 'activo'
+         ORDER BY l.fecha_vencimiento ASC LIMIT 1`,
+        [Number(item.productId)]
+      );
+      if (loteRes.rows.length > 0) {
+        const id_lote = loteRes.rows[0].id_lote;
+        await client.query(
+          `UPDATE lote_inventario SET stock_actual = stock_actual - $1 WHERE id_lote = $2`,
+          [item.quantity, id_lote]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ success: true, id_factura });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Error al registrar la venta' });
+  } finally {
+    client.release();
+  }
+});
+
 app.listen(3001, () => {
   console.log('Servidor backend corriendo en http://localhost:3001');
+});
+  // Endpoint para crear una oferta y sus productos relacionados
+// Endpoint para obtener todas las ofertas
+app.get('/api/ofertas', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        o.id_oferta,
+        o.nombre,
+        o.descripcion,
+        o.fecha_inicio,
+        o.fecha_fin,
+        o.estado,
+        o.descuento_porcentaje,
+        o.descuento_valor_fijo,
+        o.productos_gratis,
+        o.se_combina_con_otras,
+        o.prioridad,
+        o.id_tipo_oferta,
+        o.id_temporada,
+        t.nombre AS tipo_oferta,
+        s.nombre AS temporada
+      FROM oferta o
+      LEFT JOIN tipo_oferta t ON o.id_tipo_oferta = t.id_tipo_oferta
+      LEFT JOIN temporada s ON o.id_temporada = s.id_temporada
+      ORDER BY o.fecha_inicio DESC, o.prioridad DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener ofertas' });
+  }
+});
+
+// Endpoint para obtener una oferta por id
+app.get('/api/ofertas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Obtener datos principales de la oferta
+    const ofertaRes = await pool.query(`
+      SELECT 
+        o.id_oferta,
+        o.nombre,
+        o.descripcion,
+        o.fecha_inicio,
+        o.fecha_fin,
+        o.estado,
+        o.descuento_porcentaje,
+        o.descuento_valor_fijo,
+        o.productos_gratis,
+        o.se_combina_con_otras,
+        o.prioridad,
+        o.id_tipo_oferta,
+        o.id_temporada,
+        o.cantidad_minima,
+        o.valor_compra_minima,
+        o.limite_usos_por_cliente,
+        o.limite_usos_total,
+        o.requiere_codigo,
+        o.codigo_promocional,
+        t.nombre AS tipo_oferta,
+        s.nombre AS temporada
+      FROM oferta o
+      LEFT JOIN tipo_oferta t ON o.id_tipo_oferta = t.id_tipo_oferta
+      LEFT JOIN temporada s ON o.id_temporada = s.id_temporada
+      WHERE o.id_oferta = $1
+      LIMIT 1
+    `, [id]);
+    if (ofertaRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Oferta no encontrada' });
+    }
+    const oferta = ofertaRes.rows[0];
+
+    // Obtener aplicaciones de la oferta
+    const aplicacionesRes = await pool.query(
+      `SELECT * FROM oferta_aplicacion WHERE id_oferta = $1`, [id]
+    );
+    oferta.aplicaciones = aplicacionesRes.rows;
+
+    // Obtener criterios de la oferta
+    const criteriosRes = await pool.query(
+      `SELECT * FROM oferta_criterio WHERE id_oferta = $1`, [id]
+    );
+    oferta.criterios = criteriosRes.rows;
+
+    res.json(oferta);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener oferta' });
+  }
+});
+// Endpoint para métricas del dashboard
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    // Ventas del mes actual
+    const ventasMesRes = await pool.query(`
+      SELECT COALESCE(SUM(total_factura),0) AS total
+      FROM factura
+      WHERE EXTRACT(MONTH FROM fecha_factura) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND EXTRACT(YEAR FROM fecha_factura) = EXTRACT(YEAR FROM CURRENT_DATE)
+        AND estado = 'pagada'
+    `);
+    const totalSales = Number(ventasMesRes.rows[0].total);
+
+    // Ventas del mes anterior
+    const ventasMesAntRes = await pool.query(`
+      SELECT COALESCE(SUM(total_factura),0) AS total
+      FROM factura
+      WHERE fecha_factura >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+        AND fecha_factura < date_trunc('month', CURRENT_DATE)
+        AND estado = 'pagada'
+    `);
+    const totalSalesPrev = Number(ventasMesAntRes.rows[0].total);
+    const salesGrowth = totalSalesPrev > 0 ? (((totalSales - totalSalesPrev) / totalSalesPrev) * 100).toFixed(1) : 0;
+
+    // Total productos en catálogo
+    const productosRes = await pool.query(`SELECT COUNT(*) AS total FROM producto WHERE estado = 'activo'`);
+    const totalProducts = Number(productosRes.rows[0].total);
+
+    // Alertas de stock bajo
+    const stockAlertRes = await pool.query(`
+      SELECT COUNT(*) AS total
+      FROM configuracion_inventario ci
+      JOIN producto p ON p.id_producto = ci.id_producto
+      LEFT JOIN lote l ON l.id_producto = p.id_producto
+      LEFT JOIN lote_inventario li ON li.id_lote = l.id_lote
+      WHERE p.estado = 'activo'
+        AND COALESCE(li.stock_actual,0) <= ci.stock_minimo
+    `);
+    const lowStockAlerts = Number(stockAlertRes.rows[0].total);
+
+    // Ofertas activas
+    const ofertasRes = await pool.query(`SELECT COUNT(*) AS total FROM oferta WHERE estado = 'activa'`);
+    const activeOffers = Number(ofertasRes.rows[0].total);
+
+    // Clientes registrados
+    const clientesRes = await pool.query(`SELECT COUNT(*) AS total FROM cliente WHERE estado = 'activo'`);
+    const totalCustomers = Number(clientesRes.rows[0].total);
+
+    // Miembros de lealtad (VIP)
+    const loyaltyRes = await pool.query(`SELECT COUNT(*) AS total FROM cliente WHERE estado = 'activo' AND es_vip = true`);
+    const loyaltyMembers = Number(loyaltyRes.rows[0].total);
+
+    // Ingresos mensuales últimos 6 meses
+    const monthlyRevenueRes = await pool.query(`
+      SELECT TO_CHAR(fecha_factura, 'Mon YYYY') AS month, SUM(total_factura) AS revenue
+      FROM factura
+      WHERE estado = 'pagada'
+        AND fecha_factura >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+      GROUP BY month, date_trunc('month', fecha_factura)
+      ORDER BY date_trunc('month', fecha_factura)
+    `);
+    const monthlyRevenue = monthlyRevenueRes.rows.map(r => ({ month: r.month, revenue: Number(r.revenue) }));
+
+    // Ventas por categoría
+    const salesByCategoryRes = await pool.query(`
+      SELECT c.nombre AS category, COALESCE(SUM(df.subtotal_linea),0) AS amount
+      FROM detalle_factura df
+      JOIN producto p ON p.id_producto = df.id_producto
+      JOIN categoria_producto c ON c.id_categoria = p.id_categoria
+      GROUP BY c.nombre
+      ORDER BY amount DESC
+    `);
+    const totalCategorySales = salesByCategoryRes.rows.reduce((acc, r) => acc + Number(r.amount), 0);
+    const salesByCategory = salesByCategoryRes.rows.map(r => ({
+      category: r.category,
+      amount: Number(r.amount),
+      percentage: totalCategorySales > 0 ? ((Number(r.amount) / totalCategorySales) * 100).toFixed(1) : 0
+    }));
+
+    // Productos más vendidos (top 5)
+    const topProductsRes = await pool.query(`
+      SELECT p.id_producto, p.nombre, p.marca, c.nombre AS category, SUM(df.cantidad) AS quantity, SUM(df.subtotal_linea) AS revenue
+      FROM detalle_factura df
+      JOIN producto p ON p.id_producto = df.id_producto
+      JOIN categoria_producto c ON c.id_categoria = p.id_categoria
+      GROUP BY p.id_producto, p.nombre, p.marca, c.nombre
+      ORDER BY revenue DESC
+      LIMIT 5
+    `);
+    const topSellingProducts = topProductsRes.rows.map(r => ({
+      product: {
+        id: r.id_producto,
+        name: r.nombre,
+        brand: r.marca,
+        category: r.category
+      },
+      quantity: Number(r.quantity),
+      revenue: Number(r.revenue)
+    }));
+
+    res.json({
+      totalSales,
+      salesGrowth,
+      totalProducts,
+      lowStockAlerts,
+      activeOffers,
+      totalCustomers,
+      loyaltyMembers,
+      monthlyRevenue,
+      salesByCategory,
+      topSellingProducts
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener métricas del dashboard' });
+  }
 });
